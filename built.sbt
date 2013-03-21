@@ -2,7 +2,7 @@ name := "scala-react"
 
 organization := "scala"
 
-version := "1.0"
+version := "0.9"
 
 scalaVersion := "2.10.0"
 

@@ -1,439 +1,415 @@
-package scala.react
-package test
+package scala.react.test
 
-import org.junit.Test
-import org.junit.Assert._
 import org.scalatest.junit.ShouldMatchersForJUnit._
-import test.utils._
-import dom._
 
-class ReactiveTests extends TestUtils {
+import org.scalatest.FunSuite
 
-  @Test def testTurnCount() = testTurns(1) {
-  }
+trait ReactiveTests extends FunSuite with ReactiveTestUtils {
+	import scala.react._
 
-  @Test def testTurnOrder() = testTurns(4) {
-    log(1)
+	test("basicDef1") {
+		val x = Var(1)
+		assert(x.now === 1)
+		assert(x.current(Observer.Nil) === 1)
+		assert(x.message(Observer.Nil) === None)
+		val y = Signal { assert(x() === 1) }
+		y.now
+	}
 
-    turn {
-      log.assert(1)
-      log.assert()
-      log(2)
-    }
-    turn {
-      log.assert(2)
-      log.assert()
-      log(3)
-    }
-    turn {
-      log.assert(3)
-      log.assert()
-    }
-  }
+	test("basicDef2") {
+		val x = Var(1)
+		val y = Var(2)
+		val sum = Signal { x() + y() }
+		assert(sum.now === 3)
+	}
 
-  @Test(expected=classOf[AssertionError])
-  def testTurnOrderFailCount() = testTurns(3) {
-    log(1)
+	test("basicNonInjective") {
+		val msgs = new MsgLog
 
-    turn {
-      log.assert(1)
-      log.assert()
-      log(2)
-    }
-    turn {
-      log.assert(2)
-      log.assert()
-      log(3)
-    }
-    turn {
-      log.assert(3)
-      log.assert()
-    }
-  }
+		// mostly testing messages here:
+		val x = Var(2)
+		val y = Var(0)
+		val xy = Cache { x() * y() }
+		val mock = mockOb(xy) {}
+		val mockX = mockOb(x) { msgs.log(xy.message(Observer.Nil)) }
+		val mockY = mockOb(y) { msgs.log(xy.message(Observer.Nil)) }
+		assert(xy.now === 0)
+		x() = 3
+		assert(xy.now === 0)
+		y() = 10
+		assert(xy.now === 30)
+		mock.currents.assert(30)
+		msgs.assert(None, Some(30))
+	}
 
-  @Test(expected=classOf[AssertionError])
-  def testTurnOrderFailLog() = testTurns(2) {
-    turn {
-      log.assert(1)
-    }
-  }
+	test("basicGlitch") {
+		val x = Var(true)
+		val y = Cache { !x() }
+		val res = Cache { x() && y() } // always false!
+		val mock = mockOb(res) {}
+		assert(res.now === false)
+		x() = false
+		assert(res.now === false)
+		x() = true
+		assert(res.now === false)
+		mock.currents.assert() // no currents please
+		mock.messages.assert() // no messages please
+	}
 
-  @Test def testDoLater() = testTurns(5) {
-    doLater { log(1) }
-    log.assert()
-    postTurn {
-      log.assert(1)
-    }
+	test("basicPropagate1") {
+		val x = Var(1)
+		val x2 = Cache { 2 * x() }
+		val mock = mockOb(x2) {}
+		assert(x2.now === 2)
+		assert(x2.message(Observer.Nil) == None)
+		assert(x2.level === 1)
+		x2.dependents should equal(Set(mock))
+		x.dependents should equal(Set(x2))
+		x() = 3
+		assert(x2.now === 6)
+		x() = 10
+		assert(x2.now === 20)
+		mock.currents.assert(6, 20)
+		mock.messages.assert(6, 20)
+	}
 
-    turn {
-      log.assert()
-    }
-    turn {
-      log.assert()
-      doLater{ log(2) }
-      postTurn {
-        log.assert(2)
-      }
-    }
-    turn {
-      log.assert()
-      doLater{ log(10) }
-      doLater{ log(11) }
-      postTurn {
-        log.assert(10, 11)
-      }
-    }
-    turn {
-      log.assert()
-    }
-  }
+	test("basicPropagate2") {
+		val x = Var(1)
+		val y = Var(2)
+		val sum = Cache { x() + y() }
+		val mock = mockOb(sum)()
+		assert(sum.current(mock) === 3)
+		assert(sum.level === 1)
+		sum.dependents should equal(Set(mock))
+		x.dependents should equal(Set(sum))
+		y.dependents should equal(Set(sum))
+		assert(sum.now === 3)
+		x() = 10
+		assert(sum.now === 12)
+		y() = 3
+		assert(sum.now === 13)
+		x() = 20
+		assert(sum.now === 23)
+		x() = 30
+		y() = 4
+		assert(sum.now === 34)
+		mock.currents.assert(12, 13, 23, 33, 34)
+	}
 
-  @Test def simpleInvalidate() = testTurns(1) {
-    new Observer {
-      assertTrue(invalidate())
-      assertFalse(invalidate())
+	// do not subscribe (so don't trigger any subscription side effects!)
+	test("basicPropagate3") {
+		val x = Var(1)
+		val x2 = Cache { 2 * x() }
+		assert(x2.now === 2)
+		assert(x2.message(Observer.Nil) == None)
+		assert(x2.level === 1)
+		x2.dependents should equal(Set())
+		x.dependents should equal(Set(x2))
+		x() = 3
+		assert(x2.now === 6)
+		x() = 10
+		assert(x2.now === 20)
+	}
 
-      def react() {}
-    }
-  }
+	test("deepCachedPropagate") {
+		val x = Var(1)
+		val y = Var(2)
+		val sum = Cache { x() + y() }
+		val prod = Cache { x() * y() }
+		val res = Cache { sum() + prod() }
+		assert(sum.now === 3)
+		assert(prod.now === 2)
+		assert(res.now === 5)
+		val mock = mockOb(res)()
 
-  @Test def simpleObserveVar() = testTurns(7) {
-    val x = Var(1)
-    logReactive(x)
+		x.dependents should equal(Set(sum, prod))
+		y.dependents should equal(Set(sum, prod))
+		sum.dependents should equal(Set(res))
+		prod.dependents should equal(Set(res))
 
-    doLater { assertEquals(1, x.now) }
+		x() = 7
+		assert(sum.now === 9)
+		assert(prod.now === 14)
+		assert(res.now === 23)
+		mock.currents.assert(23)
+	}
 
-    turn {
-      log.assert()
-      doLater {
-        x() = 2
-      }
-    }
-    turn {
-      log.assert()
-      postTurn { log.assert(2) }
-    }
-    turn {
-      log.assert()
-    }
-    turn {
-      log.assert()
-      x() = 3
-      doLater { log.assert() }
-    }
-    turn {
-      log.assert(3)
-      x() = 4
-      x() = 5
-      doLater { log.assert() }
-    }
-    turn {
-      log.assert(5)
-    }
-  }
+	test("deepCachedPropagateWithIntermediateVar") {
+		val x = Var(1)
+		val y = Var(2)
+		val sum = Cache { x() + y() }
+		val prod = Cache { x() * y() }
+		val z = Var(3)
+		val res = Cache { z() * (sum() + prod()) }
+		assert(sum.now === 3)
+		assert(prod.now === 2)
+		assert(res.now === 3 * 5)
 
-  @Test def simpleObserveVarImmediate() = testTurns(2) {
-    val x = Var(1)
-    x() = 2
-    observe(x)(log(_))
-    log.assert()
-    doLater { log.assert(2) }
+		val mock = mockOb(res)()
 
-    turn {
-      log.assert()
-    }
-  }
+		x() = 7
+		assert(sum.now === 9)
+		assert(prod.now === 14)
+		assert(res.now === 3 * 23)
+		z() = 10
+		assert(sum.now === 9)
+		assert(prod.now === 14)
+		assert(res.now === 10 * 23)
+		mock.currents.assert(3 * 23, 10 * 23)
+	}
 
-  @Test def simpleObserveEventSource() = testTurns(6) {
-    val x = EventSource[Int]
-    observe(x)(log(_))
+	test("deepMixedPropagateWithIntermediateVar") {
+		val x = Var(1)
+		val y = Var(2)
+		val sum = Signal { x() + y() }
+		val prod = Cache { x() * y() }
+		val z = Var(3)
+		val res = Cache { z() * (sum() + prod()) }
+		assert(sum.now === 3)
+		assert(prod.now === 2)
+		assert(res.now === 3 * 5)
 
-    turn {
-      log.assert()
-      x << 1
-      log.assert()
-    }
-    turn {
-      log.assert(1)
-      x << 1
-      log.assert()
-    }
-    turn {
-      log.assert(1)
-    }
-    turn {
-      log.assert()
-      x << 3
-      log.assert()
-    }
-    turn {
-      log.assert(3)
-    }
-  }
+		val mock = mockOb(res)()
 
-  @Test def eventsOnce() = testTurns(4) {
-    val x = Events.once(1)
-    observe(x)(log(_))
-    log.assert()
+		x() = 7
+		assert(sum.now === 9)
+		assert(prod.now === 14)
+		assert(res.now === 3 * 23)
+		z() = 10
+		assert(sum.now === 9)
+		assert(prod.now === 14)
+		assert(res.now === 10 * 23)
 
-    turn {
-      log.assert(1)
-    }
-    turn {
-      log.assert()
-    }
-    turn {
-      log.assert()
-    }
-  }
+		mock.currents.assert(3 * 23, 10 * 23)
+	}
 
-  @Test def eventsNever() = testTurns(3) {
-    val x = Events.never[Int]
-    observe(x)(log(_))
-    log.assert()
+	test("levelMismatch") {
+		val x = Var(2) // level 0
+		val x2 = Cache { 2 * x() } // level 1
+		val x6 = Cache { 3 * x2() } // level 2
+		val cond = Cache { if (x() == 2) x2() else x6() } // level 2 or 3
+		assert(x.now === 2)
+		assert(x2.now === 4)
+		assert(x6.now === 12)
+		assert(cond.now === 4)
 
-    turn {
-      log.assert()
-    }
-    turn {
-      log.assert()
-    }
-  }
+		val mock = mockOb(cond)()
 
-  @Test def simpleObserveOnce() = testTurns(9) {
-    val x = Var(1)
-    observeOnce(x)(log(_))
+		x.dependents should equal(Set(x2, cond))
+		x2.dependents should equal(Set(cond, x6))
+		x6.dependents should equal(Set())
+		assert(x.level === 0)
+		assert(x2.level === 1)
+		assert(x6.level === 2)
+		assert(cond.level === 2)
+		// x6 has no dependents, so cond will try to reevaluate with an outdated (but seemingly valid) x6
 
-    turn {
-      log.assert()
-      x() = 2
-      log.assert()
-    }
-    turn {
-      log.assert(2)
-      x() = 2
-      log.assert()
-    }
-    turn {
+		x() = 3
+		assert(x.now === 3)
+		assert(cond.now === 18)
+		assert(x6.now === 18)
+		assert(cond.level === 3)
 
-    }
-    turn {
-      log.assert()
-      x() = 3
-    }
-    turn {
-      log.assert()
-    }
+		mock.currents.assert(18)
+	}
 
-    turn {
-      log.assert()
-      x() = 4
-      observeOnce(x)(log(_))
-      postTurn { log.assert(4) }
-    }
-    turn {
-      log.assert()
-      x() = 5
-    }
-    turn {
-      log.assert()
-    }
-  }
+	test("levelMismatchWithNow") {
+		val x = Var(1) // level 0
+		val x2 = Cache { 2 * x() } // level 1
+		val x6 = Cache { 3 * x2() } // level 2
+		val x24 = Cache { 4 * x6() } // level 3
+		val cond = Cache { if (x() <= 2) x2() else x24.now } // level 2 or 4
 
-  @Test def strictSignalInit() = testTurns(3) {
-    val x = Var(1)
-    val y = Strict {
-      log("y")
-      log(x.now)
-      log(x.getPulse)
-      log(x())
-    }
+		assert(x.now === 1)
+		assert(x2.now === 2)
+		assert(x6.now === 6)
+		assert(x24.now === 24)
+		assert(cond.now === 2)
+		assert(cond.level === 2)
 
-    turn {
-      log.assert("y", 1, 1, 1)
-      x() = 2
-      log.assert()
-    }
-    turn {
-      log.assert("y", 2, 2, 2)
-    }
-  }
+		x() = 2
+		assert(x.now === 2)
+		assert(x2.now === 4)
+		assert(x6.now === 12)
+		assert(x24.now === 48)
+		assert(cond.now === 4)
+		assert(cond.level === 2)
 
-  @Test def strictSignalHigherOrder() = testTurns(3) {
-    // Testing that:
-    // - we don't have assertions in the engine that break when nodes are created on the fly and/or
-    // below the current engine level
-    // - the dependent stack stays in a reasonable state in the presence of HO nodes and level
-    // mismatches
-    val x = Var(1) // level 0
-    val y = Strict { x() + 1 } // level 1
-    val z: Signal[Signal[Int]] = Strict {
-      y() // lift this sig to level 2
-      Strict {
-        x()+1 // let this one be below the outer signal => below current engine level on first creation
-      }.name = "inner"
-    }.name = "outer"
+		val mock = mockOb(cond)()
 
-    turn {
-      x() = 2
-      println(x)
-    }
-    turn {
-      x() = 3
-    }
-  }
+		x.dependents should equal(Set(x2, cond))
+		x2.dependents should equal(Set(cond, x6))
+		x6.dependents should equal(Set(x24))
+		x24.dependents should equal(Set())
 
-  @Test def strictSignalAdaptsLevel() = testTurns(3) {
-    val x = Var(1)
-    val y = Strict { x() + 1 }
-    val z = Strict {
-      log("z")
-      log(y.now)
-      log(y.getPulse)
-      log(y())
-    }
+		x() = 3
+		assert(x.now === 3)
+		assert(cond.now === 72)
+		assert(x2.now === 6)
+		assert(x6.now === 18)
+		assert(x24.now === 72)
+		assert(cond.level === 4)
 
-    turn {
-      log.assert("z", "z", 2, 2, 2) // redundant "z", because of hoisting
-      x() = 2
-      log.assert()
-    }
-    turn {
-      log.assert("z", 3, 3, 3)
-    }
-  }
+		mock.currents.assert(72)
+	}
 
-  @Test def strictSignalAdaptsLevel2() = testTurns(5) {
-    val x = Var(1)
-    val y = Strict { x() + 1 }
-    val which = Var(true)
-    val z = Strict {
-      if(which()) { log("then"); x() }
-      else { log("else"); y() }
-    }
-    logReactive(z)
+	test("mutuallyRecursiveSignals") {
+		val c = Var(true)
+		object o {
+			val x: CachedSignal[Int] = Cache { if (c()) 0 else y() }
+			val y: CachedSignal[Int] = Cache { if (c()) x() else 1 }
+		}
+		import o._
+		val mockX = mockOb(o.x) {}
+		val mockY = mockOb(o.y) {}
+		assert(x.now === 0)
+		assert(y.now === 0)
+		assert(x.level === 1)
+		assert(y.level === 2)
+		c() = false
+		assert(x.now === 1)
+		assert(y.now === 1)
+		c() = true
+		c() = false
+		c() = true
+		assert(x.level === 5)
+		assert(y.level === x.level + 1)
+	}
 
-    postTurn {
-      log.assert("then", 1)
-    }
+	test("signalDotChanges") {
+		val x = Var(2)
+		val y = Var(0)
+		val es = Cache { x() * y() }.changes
+		val mock = mockOb(es) {}
+		x() = 3 // nope
+		y() = 10
+		y() = 0
+		x() = 4 // nope
+		x() = 5 // nope
+		y() = 10
+		x() = 5 // nope
+		mock.messages.assert(30, 0, 5 * 10)
+	}
 
-    turn {
-      log.assert()
-      x() = 2
-      log.assert()
-      postTurn {
-        log.assert("then", 2)
-      }
-    }
-    turn {
-      log.assert()
-      which() = false
-      log.assert()
-      postTurn {
-        log.assert("else", "else", 3)
-      }
-    }
+	test("eventSource") {
+		val es = new EventSource[Int]
+		val mock = mockOb(es) {}
+		es.dependents should equal(Set(mock))
 
-    turn {
-      log.assert()
-      x() = 3
-      log.assert()
-      postTurn {
-        log.assert("else", 4)
-      }
-    }
+		es emit 1
+		es emit 2
+		es emit 2
+		es emit 3
+		mock.messages.assert(1, 2, 2, 3)
+	}
 
-    turn {
-      log.assert()
-      which() = true
-      log.assert()
-      postTurn {
-        log.assert("then", 3)
-      }
-    }
-  }
+	test("eventsDotSelect") {
+		val es = new EventSource[Int]
+		val res = es collect {
+			case 1 => "Yeah"
+			case 2 => "Yes"
+		}
+		val mock = mockOb(res) {}
+		es emit 1
+		es emit 2
+		es emit 2
+		es emit 3
+		es emit 10
+		es emit 1
+		mock.messages.assert("Yeah", "Yes", "Yes", "Yeah")
+	}
 
+	test("eventsDotHold") {
+		val es = new EventSource[Int]
+		val res = es.hold(0)
+		val mock = mockOb(res) {}
+		assert(res.now === 0)
+		es emit 1
+		es emit 2
+		es emit 2
+		es emit 3
+		es emit 10
+		mock.currents.assert(1, 2, 3, 10)
+		mock.messages.assert(1, 2, 3, 10)
+	}
 
+	test("eventsDotTake") {
+		val es = new EventSource[Int]
+		val res = es.take(3)
+		val mock = mockOb(res) {}
+		es emit 1
+		es emit 2
+		es emit 3
+		mock.messages.assert(1, 2, 3)
+		es emit 4
+		es emit 5
+		mock.messages.assert(1, 2, 3)
+	}
 
-  @Test def strictSignalRedundantEval() = testTurns(3) {
-    val x = Var(1)
-    val y = Strict { x() }
-    val z = Strict { x() }
-    val sum = Strict{ y() + z() }
-    observe(sum){ log(_) }
+	test("eventsDotHappended") {
+		val es = new EventSource[Int]
+		val res = es.happened
+		val mock = mockOb(res) {}
+		assert(res.now === false)
+		es emit 1
+		assert(res.now === true)
+		es emit 0
+		assert(res.now === true)
+		mock.currents.assert(true)
+	}
 
-    turn {
-      log.clear()
-      x() = 2
-      log.assert()
-    }
-    turn {
-      log.assert(4)
-    }
-  }
+	test("eventsDotSwitch") {
+		val es = new EventSource[Int]
+		val sig1 = Var(0)
+		val sig2 = Var(100)
+		val res = es switch (sig1, sig2)
+		val mock = mockOb(res) {}
+		assert(res.now === 0)
+		sig1() = 1
+		assert(res.now === 1)
+		sig2() = 101 // nope
+		assert(res.now === 1)
+		es emit 1
+		assert(res.now === 101)
+		sig1() = 2 // nope
+		assert(res.now === 101)
+		es emit 2 // nope
+		assert(res.now === 101)
+		sig2() = 102
+		assert(res.now === 102)
+	}
 
-  @Test def lazySignal() = testTurns(10) {
-    val x = Var(1)
-    val y = Lazy {
-      log("y")
-      val v = x.now
-      log(v) // should adapt level
-      log(x.getPulse)
-      log(x())
-      v
-    }
-    var doEval = Var(false)
-    val z = Strict {
-      if (doEval()) log("z " + y()) else log("z mute")
-    }
-    log.assert()
+	test("signalDotFlattenEvents") {
+		val es1 = new EventSource[Int]
+		val es2 = new EventSource[Int]
 
-    turn {
-      log.assert("z mute")
-      x() = 2
-      postTurn { log.assert() }
-    }
-    turn {
-      // lazy signal is not connected
-      log.assert()
-      doLater {
-        log("ob " + y.now)
-      }
-    }
-    turn {
-      log.assert("y", 2, 2, 2, "ob 2")
-      // this should not cause y to validate, but invalidate it
-      x() = 3
-    }
-    turn {
-      // y should not have been evaluated
-      log.assert()
-      // should cause z to eval y
-      doEval() = true
-    }
-    turn {
-      log.assert("y", 3, 3, 3, "z 3")
-      x() = 4
-      log.assert()
-    }
-    turn {
-      log.assert("y", 4, 4, 4, "z 4")
-      doEval() = false
-    }
-    turn {
-      log.assert("z mute")
-      x() = 5
-      log.assert()
-    }
-    turn {
-      log.clear() // z might have been notified, because of a stale dependency
-      x() = 6
-      log.assert()
-    }
-    turn {
-      // stale dependency should have been cleared
-      log.assert()
-    }
-  }
+		val sig = Var(es1)
+		val res = sig.flatten //(eventConstructor _)//Events
+		val mock = mockOb(res) {}
+		es1 emit 1
+		sig() = es1
+		es1 emit 2
+		es1 emit 2
+		sig() = es2
+		mock.messages.assert(1, 2, 2)
+	}
+
+	test("signalDotFlattenSignal") {
+		val s1 = Var(0)
+		val s2 = Var(10)
+
+		val sig = Var(s1)
+		val res = sig.flatten //(eventConstructor _)//Events
+		val mock = mockOb(res) {}
+		s1() = 1
+		sig() = s1
+		s1() = 2
+		s1() = 2 // no
+		s1() = 3
+		sig() = s2
+		s1() = 4 // no
+		s2() = 11
+		mock.messages.assert(1, 2, 3, 10, 11)
+	}
 
 }
