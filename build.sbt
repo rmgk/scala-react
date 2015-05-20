@@ -4,9 +4,9 @@ organization := "github.com.ingoem"
 
 version := "1.0"
 
-scalaVersion := "2.11.5"
+scalaVersion := "2.11.6"
 
-crossScalaVersions := Seq("2.10.4", "2.11.5")
+crossScalaVersions := Seq("2.10.5", "2.11.6")
 
 autoCompilerPlugins := true
 
@@ -17,7 +17,7 @@ scalacOptions ++= Seq(
 )
 
 libraryDependencies ++= Seq(
-	"org.scalatest" %% "scalatest" % "2.2.1" % "test",
+	"org.scalatest" %% "scalatest" % "2.2.5" % "test",
 	"junit" % "junit" % "4.11" % "test"
 )
 
